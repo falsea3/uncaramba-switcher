@@ -12,7 +12,12 @@ final class Switcher {
     var frontName = ""
     var frontIsGame = false
 
-    var buffer: [Stroke] = []
+    var buffer: [Stroke] = [] {
+        // новое слово — переключение посреди слова снова разрешено
+        didSet { if buffer.isEmpty { liveFrom = nil; liveLocked = false } }
+    }
+    var liveFrom: Lang?      // слово переключили посреди набора — из какой раскладки
+    var liveLocked = false   // в этом слове переключать посреди набора больше нельзя (отменили двойным Shift)
     var keySerial = 0  // растёт на каждое нажатие — чтобы не исправлять, если вы уже печатаете дальше
     var bufferLang: Lang = .en
     var lastWord: WordRecord?
@@ -104,6 +109,8 @@ final class Switcher {
             let target = bufferLang.other
             replace(count: layouts.render(buffer, bufferLang).count, with: layouts.render(buffer, target))
             bufferLang = target
+            liveFrom = nil
+            liveLocked = true
             layouts.select(target)
             store.play(store.config.switchSound)
             return
@@ -172,17 +179,36 @@ final class Switcher {
             if f.contains(.maskAlphaShift) { m |= 2 }
             buffer.append(Stroke(key: key, mods: m))
             if buffer.count > 64 { buffer.removeAll() }
+            liveCheck()
             return pass(e)
+        }
+    }
+
+    /// Переключение посреди слова: с 4-й буквы, если в текущей раскладке получается невозможное
+    /// для языка сочетание букв, а в другой — нормальное (ghbd… -> прив…). Один раз на слово.
+    func liveCheck() {
+        guard store.config.autoSwitch, frontMode == .auto, liveFrom == nil, !liveLocked, buffer.count >= 4 else { return }
+        let serial = keySerial, strokes = buffer, lang = bufferLang
+        DispatchQueue.main.async { [self] in
+            guard keySerial == serial, let target = brain.liveSwitch(strokes, typedIn: lang) else { return }
+            replace(count: layouts.render(strokes, lang).count, with: layouts.render(strokes, target))
+            layouts.select(target)
+            bufferLang = target
+            liveFrom = lang
+            store.play(store.config.switchSound)
         }
     }
 
     func boundary(_ key: UInt16, _ e: CGEvent) -> Unmanaged<CGEvent>? {
         let word = buffer
         let lang = bufferLang
+        let from = liveFrom
         buffer.removeAll()
         guard !word.isEmpty else { lastWord = nil; return pass(e) }
         let typed = layouts.render(word, lang)
-        let rec = WordRecord(strokes: word, typedLang: lang, shownLang: lang, shownText: typed, auto: false, boundaryKey: key, restore: typed)
+        // если слово переключили посреди набора — это уже исправление: двойной Shift вернёт исходное
+        let rec = WordRecord(strokes: word, typedLang: from ?? lang, shownLang: lang, shownText: typed, auto: from != nil,
+                             boundaryKey: key, restore: from.map { layouts.render(word, $0) } ?? typed)
         let prev = lastWord  // слово прямо перед этим (lastWord сбрасывается мышью, стрелками, двойным пробелом)
         lastWord = rec
         if typed.contains(where: { $0.isLetter }) { brain.lastLang = lang }

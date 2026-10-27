@@ -46,6 +46,9 @@ final class FreqModel {
         return Double(n) / total * 1_000_000
     }
 
+    /// Доля буквенной триграммы на миллиард (0 — такое сочетание в языке не встречалось). Пробел — край слова.
+    func trigram(_ t: String) -> Double { Double(rawCount("3>" + t)) }
+
     /// Ёфикатор: слово с «ё», которое в живой речи пишут через «ё» (метку ставит tools/BuildModel.swift).
     func isYo(_ word: String) -> Bool { rawCount("ё>" + word) > 0 }
 

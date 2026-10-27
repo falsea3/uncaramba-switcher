@@ -125,6 +125,14 @@ final class Brain {
         // слово есть в модели (частоты, сленг, полный словарь) — значит, это не ошибка, не трогаем
         guard !known(c, l) else { return nil }
         guard let (fixed, score) = bestEdit(c, l), score >= minScore else { return nil }
+        // в словах из трёх букв — только удвоенная буква (окк -> ок) или перестановка (teh -> the),
+        // замена буквы слишком рискованна (jwt -> jet, zsh -> ash)
+        if c.count == 3 {
+            let a = Array(c.lowercased())
+            let doubledFix = fixed.count == 2 && (a[0] == a[1] || a[1] == a[2])
+            let swapFix = fixed.count == 3 && fixed.sorted() == a.sorted()
+            if !doubledFix && !swapFix { return nil }
+        }
         return swapCore(text, matchCase(fixed, like: c))
     }
 
@@ -190,6 +198,8 @@ final class Brain {
             // в начале слова лишняя буква бывает реже, а последнюю почти никогда не «отрезаем» (коек -> кое, ошибок -> ошибо)
             let doubled = around.contains { $0 == a[i] }
             let slip = around.contains { neighbors($0, l).contains(a[i]) }
+            // первую букву считаем лишней, только если она удвоена (xcode ≠ code, зумер ≠ умер)
+            if i == 0 && !doubled { continue }
             var b = a; b.remove(at: i); add(b, (doubled ? 1 : slip ? 0.5 : 0.1) * (i == 0 ? 0.5 : i == n - 1 ? 0.2 : 1))
         }
         // потерянный пробел: незнаю -> не знаю, вообщем -> в общем (оценка — в editScore)
@@ -336,6 +346,47 @@ final class Brain {
 
     // MARK: Решение
 
+    // MARK: Буквенные триграммы
+
+    /// Пороги подобраны замером на словах из модели (см. --calibrate).
+    static var triMarginBoundary = 2.0
+    static var triMarginLive = 2.5
+
+    /// Насколько строка похожа на слово языка: средний логарифм вероятности буквенных триграмм
+    /// и число сочетаний, которых в языке не бывает. closed — слово закончено (учитываем правый край).
+    func plausibility(_ w: String, _ l: Lang, closed: Bool) -> (avg: Double, unseen: Int)? {
+        guard let m = models[l] else { return nil }
+        let s = Array(" " + w.lowercased().replacingOccurrences(of: "ё", with: "е") + (closed ? " " : ""))
+        guard s.count >= 3 else { return nil }
+        var sum = 0.0, unseen = 0
+        for i in 0..<(s.count - 2) {
+            let v = m.trigram(String(s[i...(i + 2)]))
+            if v == 0 { unseen += 1 }
+            sum += log(max(v, 0.5) / 1e9)
+        }
+        return (sum / Double(s.count - 2), unseen)
+    }
+
+    /// `a` (в языке la) правдоподобнее `b` (в языке lb): в `b` есть невозможное сочетание букв, в `a` нет,
+    /// и в среднем `a` заметно вероятнее.
+    func trigramPrefers(_ a: String, _ la: Lang, over b: String, _ lb: Lang, closed: Bool, margin: Double) -> Bool {
+        guard a.count >= 4, a.allSatisfy({ $0.isLetter }), b.allSatisfy({ $0.isLetter }),
+              let pa = plausibility(a, la, closed: closed), let pb = plausibility(b, lb, closed: closed)
+        else { return false }
+        return pb.unseen > 0 && pa.unseen == 0 && pa.avg - pb.avg > margin
+    }
+
+    /// Переключение посреди слова: по уже набранным буквам (от 4). nil — оставить как есть.
+    func liveSwitch(_ strokes: [Stroke], typedIn lang: Lang) -> Lang? {
+        guard strokes.count >= 4 else { return nil }
+        let other = lang.other
+        let cur = layouts.render(strokes, lang), oth = layouts.render(strokes, other)
+        let key = cur.lowercased()
+        // начало слова, которое вы просили не трогать или которое уже является словом, — не трогаем
+        if store.never.contains(where: { $0.hasPrefix(key) }) || known(cur, lang) { return nil }
+        return trigramPrefers(oth, other, over: cur, lang, closed: false, margin: Brain.triMarginLive) ? other : nil
+    }
+
     /// Ёфикатор по модели: пробуем заменить одну «е» на «ё» и смотрим, есть ли такое слово с меткой ё.
     /// Регистр букв сохраняется: Еще -> Ещё.
     func yoFix(_ word: String) -> String? {
@@ -431,7 +482,14 @@ final class Brain {
         // Опечатки: сначала в текущей раскладке, потом (строже) — в другой
         if config.typos {
             if let f = typoFix(cur, lang) { return finish(lang, f, .typo) }
-            if let f = typoFix(oth, other, minScore: 5) { return finish(other, f, .switchLayout) }
+            // опечатка в чужой раскладке — только для слов от 5 букв (иначе скуф -> crew)
+            if curCore.count >= 5, let f = typoFix(oth, other, minScore: 5) { return finish(other, f, .switchLayout) }
+        }
+
+        // Слова нет ни в одной раскладке (новое слово, имя, склейка) — решают буквенные триграммы
+        if !store.never.contains(key),
+           trigramPrefers(othCore, other, over: curCore, lang, closed: true, margin: Brain.triMarginBoundary) {
+            return finish(other, oth, .switchLayout)
         }
         return nil
     }

@@ -9,6 +9,7 @@
 // 4. Ё: слово с «ё» помечается для ёфикатора, если в субтитрах его пишут через «ё» хотя бы в 25% случаев
 //    (у однозначных слов — 30–45%: ещё, идёт, ребёнок; если «е»-вариант — другое слово, доля мала: чём/чем, жёны/жены).
 //    Неоднозначные пары с большой долей (всё/все) — в data/yo_ambiguous_<lang>.txt.
+// 5. Буквенные триграммы — для слов, которых нет в модели, и для переключения посреди слова.
 // Промежуточные чистые файлы пишутся в <clean-dir> (чтобы их можно было посмотреть), в приложение идёт только .bin.
 
 import Cocoa
@@ -166,6 +167,22 @@ for (w, n) in counts { byHash[fnv(w), default: 0] &+= UInt32(min(n, Int(UInt32.m
 // метка ёфикатора: отдельная запись с ключом «ё>слово»
 for (w, _) in yoWords { byHash[fnv("ё>" + w)] = 1 }
 
+// Шаг 5: буквенные триграммы — насколько сочетание из трёх букв типично для языка.
+// Считаются по всем словам модели с весом частоты (слова из полного словаря — с весом 1), края слова — пробел.
+// Хранятся как «доля на миллиард» под ключом «3>абв»; ни разу не встреченные — не хранятся.
+var tri: [String: Double] = [:]
+var triTotal = 0.0
+for (w, n) in counts {
+    let s = Array(" " + w.replacingOccurrences(of: "ё", with: "е") + " ")
+    guard s.count >= 3 else { continue }
+    for i in 0..<(s.count - 2) {
+        tri[String(s[i...(i + 2)]), default: 0] += Double(n)
+        triTotal += Double(n)
+    }
+}
+for (t, c) in tri { byHash[fnv("3>" + t)] = UInt32(max(1, (c / triTotal * 1e9).rounded())) }
+writeClean("tri", tri.sorted { $0.value > $1.value }.map { ($0.key.replacingOccurrences(of: " ", with: "_"), Int($0.value)) })
+
 var out = Data("CLM1".utf8)
 func append<T: FixedWidthInteger>(_ v: T) { var x = v.littleEndian; withUnsafeBytes(of: &x) { out.append(contentsOf: $0) } }
 append(UInt32(byHash.count))
@@ -178,5 +195,5 @@ try! out.write(to: URL(fileURLWithPath: args[6]))
 
 print("""
 \(lang): из субтитров \(fromSubs) слов (выброшено \(droppedSubs)), из словаря +\(dictAdded.count) (выброшено \(droppedDict)), \
-ё: \(yoWords.count), итого \(byHash.count) записей, \(out.count / 1024 / 1024) МБ, \(Int(Date().timeIntervalSince(started))) с
+ё: \(yoWords.count), триграмм: \(tri.count), итого \(byHash.count) записей, \(out.count / 1024 / 1024) МБ, \(Int(Date().timeIntervalSince(started))) с
 """)
