@@ -1,0 +1,4 @@
+build/
+data/raw/
+data/clean/
+.DS_Store

@@ -1,0 +1,35 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then VERSION="${GITHUB_REF_NAME#v}"; else VERSION="0.0.0"; fi
+          VERSION="$VERSION" ./build.sh
+
+      - name: Zip
+        run: ditto -c -k --keepParent build/UnCarambaSwitcher.app UnCarambaSwitcher.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UnCarambaSwitcher
+          path: UnCarambaSwitcher.zip
+
+      - name: Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" UnCarambaSwitcher.zip --title "$GITHUB_REF_NAME" --generate-notes

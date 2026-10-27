@@ -1,0 +1,51 @@
+# Living words that the macOS dictionary rejects but must stay untouched.
+# One per line, optional count after a space (default: subtitle count, at least 100).
+don't 300000
+can't 200000
+won't 60000
+isn't 80000
+aren't 40000
+i'm 600000
+you're 250000
+we're 120000
+they're 70000
+it's 700000
+that's 300000
+what's 120000
+there's 80000
+let's 100000
+i've 100000
+you've 50000
+we've 40000
+i'll 150000
+you'll 50000
+we'll 50000
+he'll 15000
+she'll 10000
+i'd 60000
+you'd 20000
+he's 120000
+she's 80000
+ok
+okay
+lol
+btw
+thx
+pls
+gonna
+wanna
+gotta
+yeah
+yep
+nope
+dude
+bro
+app
+apps
+email
+emails
+online
+offline
+login
+logout
+wifi
