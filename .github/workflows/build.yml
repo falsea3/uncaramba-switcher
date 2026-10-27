@@ -20,16 +20,20 @@ jobs:
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then VERSION="${GITHUB_REF_NAME#v}"; else VERSION="0.0.0"; fi
           VERSION="$VERSION" ./build.sh
 
-      - name: Zip
-        run: ditto -c -k --keepParent build/UnCarambaSwitcher.app UnCarambaSwitcher.zip
+      - name: DMG
+        run: |
+          mkdir -p build/dmg
+          cp -R build/UnCarambaSwitcher.app build/dmg/
+          ln -s /Applications build/dmg/Applications
+          hdiutil create -volname UnCarambaSwitcher -srcfolder build/dmg -ov -format UDZO UnCarambaSwitcher.dmg
 
       - uses: actions/upload-artifact@v4
         with:
           name: UnCarambaSwitcher
-          path: UnCarambaSwitcher.zip
+          path: UnCarambaSwitcher.dmg
 
       - name: Release
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" UnCarambaSwitcher.zip --title "$GITHUB_REF_NAME" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" UnCarambaSwitcher.dmg --title "$GITHUB_REF_NAME" --generate-notes
