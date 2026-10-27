@@ -25,7 +25,7 @@ struct WordRecord {
     var shownText: String
     var auto: Bool          // true, если мы сами исправили слово
     let boundaryKey: UInt16 // чем закончилось слово (пробел / enter / tab)
-    var restore: String     // что вернуть при отмене (для склейки «во-первых» — с пробелом впереди)
+    var restore: String     // что вернуть при отмене (для склейки «во-первых» — оба слова через пробел)
     var joined: String? = nil  // склеенное через дефис слово, если была склейка
 }
 

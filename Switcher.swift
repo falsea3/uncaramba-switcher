@@ -199,11 +199,14 @@ final class Switcher {
                 // «во первых» -> «во-первых»: стираем и это слово, и пробел перед ним
                 if let p = prev, p.boundaryKey == kSpace, p.shownLang == .ru, textLang == .ru,
                    brain.joinFix(prev: p.shownText, cur: text, .ru) {
-                    replace(count: typed.count + 2, with: "-" + text + " ")
+                    // переписываем оба слова целиком, чтобы ёфикатор мог поправить и первое (все таки -> всё-таки)
+                    var joined = p.shownText + "-" + text
+                    if store.config.yo, let y = Yo.fix(brain.core(joined)) { joined = joined.replacingOccurrences(of: brain.core(joined), with: y) }
+                    replace(count: p.shownText.count + 1 + typed.count + 1, with: joined + " ")
                     var r = rec
-                    r.restore = " " + typed
-                    r.joined = (p.shownText + "-" + brain.core(text)).lowercased()
-                    applied(Decision(lang: textLang, text: "-" + text, kind: .typo), to: r)
+                    r.restore = p.shownText + " " + typed
+                    r.joined = (p.shownText + "-" + brain.core(text)).lowercased()  // ключ без ё — так его проверяет joinFix
+                    applied(Decision(lang: textLang, text: joined, kind: .typo), to: r)
                     return
                 }
                 guard let d, d.text != typed else { return }
