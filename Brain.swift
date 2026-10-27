@@ -20,6 +20,8 @@ final class Brain {
     static let common = 1.0
     /// Слова из полного словаря без единого употребления в субтитрах имеют частоту 1 на всю выборку — это меньше 0.05 на миллион.
     static let dictionaryOnly = 0.05
+    /// Слово встречалось в живой речи хотя бы 3 раза (у слов только из словаря частота ~0.007 на миллион).
+    static let liveWord = 0.02
 
     static let singles: [Lang: Set<String>] = [.en: ["a", "i"], .ru: ["а", "в", "и", "к", "о", "с", "у", "я", "ж", "б"]]
     static let alphabet: [Lang: [Character]] = [.en: Array("abcdefghijklmnopqrstuvwxyz"), .ru: Array("абвгдеёжзийклмнопрстуфхцчшщъыьэюя")]
@@ -123,7 +125,7 @@ final class Brain {
         // заглавные внутри слова — бренд или код (iPhone, YouTube, JavaScript), не опечатка
         guard !c.dropFirst().contains(where: { $0.isUppercase }) || c.allSatisfy({ !$0.isLowercase }) else { return nil }
         // слово есть в модели (частоты, сленг, полный словарь) — значит, это не ошибка, не трогаем
-        guard !known(c, l) else { return nil }
+        guard !known(c, l), !inflected(c, l) else { return nil }
         guard let (fixed, score) = bestEdit(c, l), score >= minScore else { return nil }
         // в словах из трёх букв — только удвоенная буква (окк -> ок) или перестановка (teh -> the),
         // замена буквы слишком рискованна (jwt -> jet, zsh -> ash)
@@ -134,6 +136,21 @@ final class Brain {
             if !doubledFix && !swapFix { return nil }
         }
         return swapCore(text, matchCase(fixed, like: c))
+    }
+
+    /// Русские окончания: новое слово = известное слово + окончание — это форма слова, а не опечатка
+    /// (билд -> билда, билдом, билде; иначе «билда» исправилось бы на «билла»).
+    private static let endings = ["а", "я", "у", "ю", "е", "и", "ы", "о", "ом", "ем", "ой", "ей", "ам", "ям",
+                                  "ах", "ях", "ами", "ями", "ов", "ев", "ую", "ая", "ое", "ые", "ого", "ему", "ому"]
+
+    func inflected(_ c: String, _ l: Lang) -> Bool {
+        guard l == .ru else { return false }
+        let w = c.lowercased()
+        // основа должна быть живым словом (встречалась в речи, а не только в полном словаре: малок -> малоко — опечатка)
+        // и не короче 4 букв (к короткой «люб» подходит что угодно: любю — это люблю)
+        return Brain.endings.contains { e in
+            w.count - e.count >= 4 && w.hasSuffix(e) && freq(String(w.dropLast(e.count)), l) >= Brain.liveWord
+        }
     }
 
     /// Лучший вариант на одну правку: вес правки × частота. При равенстве — по алфавиту, чтобы результат был стабильным.
@@ -482,8 +499,10 @@ final class Brain {
         // Опечатки: сначала в текущей раскладке, потом (строже) — в другой
         if config.typos {
             if let f = typoFix(cur, lang) { return finish(lang, f, .typo) }
-            // опечатка в чужой раскладке — только для слов от 5 букв (иначе скуф -> crew)
-            if curCore.count >= 5, let f = typoFix(oth, other, minScore: 5) { return finish(other, f, .switchLayout) }
+            // опечатка в чужой раскладке — только для слов от 5 букв (иначе скуф -> crew) и только если набранное
+            // не похоже на свой язык: в нём есть невозможное сочетание букв (иначе билде -> ,bklt -> bolt)
+            if curCore.count >= 5, (plausibility(curCore, lang, closed: true)?.unseen ?? 0) > 0,
+               let f = typoFix(oth, other, minScore: 5) { return finish(other, f, .switchLayout) }
         }
 
         // Слова нет ни в одной раскладке (новое слово, имя, склейка) — решают буквенные триграммы
