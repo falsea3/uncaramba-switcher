@@ -122,20 +122,16 @@ final class Brain {
         guard c.count >= 3, alphabetOK(c, l), store.never.contains(c.lowercased()) == false else { return nil }
         // заглавные внутри слова — бренд или код (iPhone, YouTube, JavaScript), не опечатка
         guard !c.dropFirst().contains(where: { $0.isUppercase }) || c.allSatisfy({ !$0.isLowercase }) else { return nil }
-        let curF = freq(c, l)
-        // известное слово трогаем, только если оно редкое (меньше 10 на млн) — это «грязь» из живой речи
-        // вроде «вообщем», и только если вариант минимум в 15 раз вероятнее
-        if curF > 0 && curF >= 10 { return nil }
-        // существующее слово только разбиваем на два (вообщем -> в общем), но не меняем на другое слово (коек -> кошек):
-        // какое из двух настоящих слов имелось в виду, без контекста не понять
-        guard let (fixed, score) = bestEdit(c, l, splitsOnly: curF > 0), score >= max(minScore, curF * 15) else { return nil }
+        // слово есть в модели (частоты, сленг, полный словарь) — значит, это не ошибка, не трогаем
+        guard !known(c, l) else { return nil }
+        guard let (fixed, score) = bestEdit(c, l), score >= minScore else { return nil }
         return swapCore(text, matchCase(fixed, like: c))
     }
 
     /// Лучший вариант на одну правку: вес правки × частота. При равенстве — по алфавиту, чтобы результат был стабильным.
-    func bestEdit(_ c: String, _ l: Lang, splitsOnly: Bool = false) -> (String, Double)? {
+    func bestEdit(_ c: String, _ l: Lang) -> (String, Double)? {
         var best: (String, Double)?
-        for (cand, weight) in edits(Array(c.lowercased()), l) where !splitsOnly || cand.contains(" ") {
+        for (cand, weight) in edits(Array(c.lowercased()), l) {
             let score = editScore(cand, l) * weight
             guard score > 0 else { continue }
             if best == nil || score > best!.1 || (score == best!.1 && cand < best!.0) { best = (cand, score) }
@@ -407,11 +403,8 @@ final class Brain {
 
         // Слово в текущей раскладке
         if let f = capsFix(cur), known(core(f), lang) { return finish(lang, f, .caps) }
-        if known(curCore, lang) {
-            // редкое «грязное» слово из живой речи (вообщем) — проверяем, нет ли варианта намного вероятнее
-            if config.typos, let f = typoFix(cur, lang) { return finish(lang, f, .typo) }
-            return finish(lang, cur, nil)
-        }
+        // существующее слово не меняем — только ёфикатор и пунктуация на краях (привет1 -> привет!)
+        if known(curCore, lang) { return finish(lang, cur, nil) }
         if let tr = tricks(cur, lang) { return finish(lang, tr, .typo) }
 
         // Опечатки: сначала в текущей раскладке, потом (строже) — в другой
