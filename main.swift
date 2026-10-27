@@ -13,6 +13,7 @@ let tapCallback: CGEventTapCallBack = { _, type, event, _ in sw.handle(type: typ
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var item: NSStatusItem!
     var settingsWindow: NSWindow?
+    let updater = Updater()
     var permissionTimer: Timer?
 
     func applicationDidFinishLaunching(_ n: Notification) {
@@ -38,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         refreshTitle()
+        updater.start()
         // Прогрев словарей сейчас и раз в 10 минут, чтобы первое слово не тормозило.
         DispatchQueue.main.async { sw.brain.warmUp() }
         Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { _ in sw.brain.warmUp() }
@@ -81,7 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        let head = NSMenuItem(title: sw.tap == nil ? "UnCarambaSwitcher — нужны разрешения" : "UnCarambaSwitcher", action: nil, keyEquivalent: "")
+        let head = NSMenuItem(title: sw.tap == nil ? "UnCarambaSwitcher — нужны разрешения" : "UnCarambaSwitcher \(Updater.current)", action: nil, keyEquivalent: "")
         head.isEnabled = false
         menu.addItem(head)
         menu.addItem(.separator())
@@ -106,6 +108,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         menu.addItem(.separator())
         add(menu, "Настройки…", #selector(openSettings), key: ",")
+        if updater.installing {
+            let mi = NSMenuItem(title: "Обновление…", action: nil, keyEquivalent: "")
+            mi.isEnabled = false
+            menu.addItem(mi)
+        } else if let r = updater.available {
+            add(menu, "Обновить до \(r.version)…", #selector(installUpdate))
+        } else {
+            add(menu, "Проверить обновления", #selector(checkUpdates))
+        }
         if sw.tap == nil { add(menu, "Открыть настройки разрешений…", #selector(openPrivacy)) }
         menu.addItem(.separator())
         add(menu, "Выход", #selector(quit), key: "q")
@@ -146,6 +157,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
     }
     @objc func quit() { NSApp.terminate(nil) }
+    @objc func checkUpdates() { updater.check(interactive: true) }
+    @objc func installUpdate() { updater.install() }
 
     func alert(_ text: String) {
         let a = NSAlert()
@@ -180,7 +193,7 @@ if CommandLine.arguments.contains("--test") {
         ("helloWorld", .en), ("iPhone", .en), ("почемуто", .ru), ("чтото", .ru), ("гденибудь", .ru), ("коекто", .ru),
         ("давайка", .ru), ("всетаки", .ru), ("кембы", .ru), ("хорошобы", .ru), ("чтобы", .ru), ("также", .ru), ("2024", .ru), ("test1", .en),
         // частотная модель
-        ("кароч", .ru), ("bp", .en), ("lf", .en), ("ckjdj", .en), ("привт", .ru), ("ghbdtyn", .en), ("vs", .en), ("he", .en), ("nj", .en), ("ok", .en), ("щл", .ru),
+        ("кароч", .ru), ("bp", .en), ("jr", .en), ("lf", .en), ("приоритетнее", .ru), ("приоритетне", .ru), ("ckjdj", .en), ("привт", .ru), ("ghbdtyn", .en), ("vs", .en), ("he", .en), ("nj", .en), ("ok", .en), ("щл", .ru),
         ("норм", .ru), ("щас", .ru), ("вообщем", .ru), ("Вообщем", .ru), ("окк", .ru), ("ок", .ru), ("незнаю", .ru), ("зделать", .ru), ("извени", .ru), ("агенство", .ru), ("будующий", .ru), ("alot", .en), ("коек", .ru), ("джон", .ru), ("didn't", .en), ("didnt", .en), ("крч", .ru), ("ктото", .ru), ("какбудто", .ru), ("dct,otv", .en), ("dont", .en), ("малоко", .ru), ("также", .ru), ("тоже", .ru), ("сначала", .ru), ("навсегда", .ru), ("Ghbdtn", .en), ("dct", .en), ("ckjdj", .en),
     ]
     for (text, lang) in cases {

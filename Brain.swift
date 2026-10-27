@@ -149,6 +149,9 @@ final class Brain {
         let parts = cand.split(separator: " ")
         guard parts.count == 2 else { return freq(cand, l) }
         guard max(parts[0].count, parts[1].count) >= 3 else { return 0 }  // «о к» — не разбиение, а мусор
+        // слитно пишут короткое служебное слово со следующим: в общем, не знаю, как будто, a lot.
+        // Длинное слово + что-то — это скорее редкая форма (приоритетнее ≠ приоритет не)
+        guard parts[0].count <= 3 else { return 0 }
         let a = freq(String(parts[0]), l), b = freq(String(parts[1]), l)
         return a * b / 1_000_000 * 30
     }
@@ -375,8 +378,8 @@ final class Brain {
         // оба живые: переключаем, только если «чужое» в сотни раз частотнее и предыдущее слово было на том языке
         // (иначе «vs» посреди английского текста станет «мы»)
         if lastLang == other && othF >= Brain.common && othF > curF * 300 { return finish(other, cand, .switchLayout) }
-        // приоритет русского: если сейчас не пишем по-английски, хватает 30-кратного перевеса (bp -> из)
-        if other == .ru && lastLang != .en && othF >= Brain.common && othF > curF * 30 { return finish(other, cand, .switchLayout) }
+        // приоритет русского: если сейчас не пишем по-английски, хватает 5-кратного перевеса (bp -> из, jr -> ок)
+        if other == .ru && lastLang != .en && othF >= Brain.common && othF > curF * 5 { return finish(other, cand, .switchLayout) }
         return nil
     }
 

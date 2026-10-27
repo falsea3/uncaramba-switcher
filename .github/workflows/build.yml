@@ -15,6 +15,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Подпись постоянным сертификатом: без неё после каждого автообновления macOS сбрасывает
+      # разрешения (Универсальный доступ). Секреты: MACOS_CERT_P12 (base64 от .p12) и MACOS_CERT_PASSWORD.
+      # Если секретов нет, build.sh подпишет ad-hoc.
+      - name: Import signing certificate
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          [[ -n "$CERT_P12" ]] || { echo "Сертификата нет — подпись ad-hoc"; exit 0; }
+          KC=$RUNNER_TEMP/build.keychain
+          echo "$CERT_P12" | base64 --decode > $RUNNER_TEMP/cert.p12
+          security create-keychain -p ci "$KC"
+          security set-keychain-settings -lut 3600 "$KC"
+          security unlock-keychain -p ci "$KC"
+          security import $RUNNER_TEMP/cert.p12 -k "$KC" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci "$KC"
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          rm $RUNNER_TEMP/cert.p12
+
       - name: Build
         run: |
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then VERSION="${GITHUB_REF_NAME#v}"; else VERSION="0.0.0"; fi
