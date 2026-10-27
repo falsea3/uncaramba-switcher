@@ -374,7 +374,8 @@ final class Brain {
     private func switchDecision(_ cur: String, _ oth: String, _ lang: Lang) -> Decision? {
         let other = lang.other
         let curCore = core(cur), othCore = core(oth)
-        guard !othCore.isEmpty, oth.filter({ !$0.isLetter && $0 != "-" }).count <= 1 else { return nil }
+        // набрано без единой буквы (запятая, точка с запятой) — это знак, а не слово: не переключаем («,» -> «б»)
+        guard !curCore.isEmpty, !othCore.isEmpty, oth.filter({ !$0.isLetter && $0 != "-" }).count <= 1 else { return nil }
         if let f = capsFix(cur), known(core(f), lang) { return nil }
         if tricks(cur, lang) != nil { return nil }
 
