@@ -286,13 +286,15 @@ final class Brain {
             }
         }
         if l == .ru {
-            // точка и запятая из английской раскладки: пирогб -> пирог, рубю -> руб.
+            // точка и запятая с «английской» клавиши: пирогб -> пирог, ошибкамиб -> ошибками, рубю -> руб.
+            // Ставим знак, если слово без последней буквы существует и опечатка не вероятнее (любю -> люблю, а не «люб.»)
             if let last = c.last, last == "б" || last == "ю" {
                 let stem = String(c.dropLast())
-                // знак ставим только после достаточно частого слова (пирог — 24 на млн, люб — 1)
-                var f = freq(stem, l) >= 3 ? freq(stem, l) : 0
-                if last == "ю" && Brain.abbreviations.contains(stem.lowercased()) { f = max(f, Brain.common) }
-                cands.append((stem + (last == "б" ? "," : "."), f))
+                let sf = freq(stem, l)
+                let isAbbr = last == "ю" && Brain.abbreviations.contains(stem.lowercased())
+                if known(stem, l) || isAbbr, (bestEdit(c, l)?.1 ?? 0) <= sf {
+                    cands.append((stem + (last == "б" ? "," : "."), max(sf, Brain.common)))
+                }
             }
             // дефис: коекто -> кое-кто, почемуто -> почему-то (сравниваем частоту целого слова с дефисом)
             if lower.hasPrefix("кое"), c.count > 4 {
@@ -334,6 +336,24 @@ final class Brain {
 
     // MARK: Решение
 
+    /// Ёфикатор по модели: пробуем заменить одну «е» на «ё» и смотрим, есть ли такое слово с меткой ё.
+    /// Регистр букв сохраняется: Еще -> Ещё.
+    func yoFix(_ word: String) -> String? {
+        guard let m = models[.ru] else { return nil }
+        let lower = Array(word.lowercased()), orig = Array(word)
+        guard lower.count == orig.count else { return nil }
+        for i in lower.indices where lower[i] == "е" {
+            var cand = lower
+            cand[i] = "ё"
+            if m.isYo(String(cand)) {
+                var out = orig
+                out[i] = orig[i].isUppercase ? "Ё" : "ё"
+                return String(out)
+            }
+        }
+        return nil
+    }
+
     /// Финальный шаг: пунктуация, слитные слова и ёфикатор.
     private func finish(_ l: Lang, _ text: String, _ kind: Decision.Kind?) -> Decision? {
         var t = text
@@ -342,7 +362,7 @@ final class Brain {
             t = tr
             k = k ?? .typo
         }
-        if l == .ru && config.yo, let y = Yo.fix(core(t)) {
+        if l == .ru && config.yo, let y = yoFix(core(t)) {
             t = swapCore(t, y)
             k = k ?? .yo
         }

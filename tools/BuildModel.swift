@@ -6,6 +6,9 @@
 // 2. Сленг из slang.txt проходит без проверки словарём.
 // 3. Полный словарь словоформ: каждое слово, которое подтверждает словарь macOS и которого не было
 //    в субтитрах, добавляется с частотой 1 — «слово существует, но редкое».
+// 4. Ё: слово с «ё» помечается для ёфикатора, если в субтитрах его пишут через «ё» хотя бы в 25% случаев
+//    (у однозначных слов — 30–45%: ещё, идёт, ребёнок; если «е»-вариант — другое слово, доля мала: чём/чем, жёны/жены).
+//    Неоднозначные пары с большой долей (всё/все) — в data/yo_ambiguous_<lang>.txt.
 // Промежуточные чистые файлы пишутся в <clean-dir> (чтобы их можно было посмотреть), в приложение идёт только .bin.
 
 import Cocoa
@@ -128,6 +131,15 @@ func writeClean(_ name: String, _ items: [(String, Int)]) {
 }
 writeClean("freq", counts.sorted { $0.value > $1.value }.map { ($0.key, $0.value) })
 
+// Шаг 4 (до словаря — нужны только частоты живой речи): какие слова ёфикатор пишет через «ё»
+let yoAmbiguous = Set(readLines("data/yo_ambiguous_\(lang).txt").filter { !$0.hasPrefix("#") }.map { String($0).lowercased() })
+var yoWords: [(String, Int)] = []
+for (w, n) in counts where w.contains("ё") && !yoAmbiguous.contains(w) {
+    let plain = counts[w.replacingOccurrences(of: "ё", with: "е")] ?? 0
+    if Double(n) / Double(n + plain) >= 0.25 { yoWords.append((w, n)) }
+}
+writeClean("yo", yoWords.sorted { $0.1 > $1.1 })
+
 // Шаг 2: полный словарь словоформ с частотой 1
 var dictWords: [String] = []
 var seen = Set<String>()
@@ -151,6 +163,8 @@ func fnv(_ s: String) -> UInt64 {
 }
 var byHash: [UInt64: UInt32] = [:]
 for (w, n) in counts { byHash[fnv(w), default: 0] &+= UInt32(min(n, Int(UInt32.max / 2))) }
+// метка ёфикатора: отдельная запись с ключом «ё>слово»
+for (w, _) in yoWords { byHash[fnv("ё>" + w)] = 1 }
 
 var out = Data("CLM1".utf8)
 func append<T: FixedWidthInteger>(_ v: T) { var x = v.littleEndian; withUnsafeBytes(of: &x) { out.append(contentsOf: $0) } }
@@ -164,5 +178,5 @@ try! out.write(to: URL(fileURLWithPath: args[6]))
 
 print("""
 \(lang): из субтитров \(fromSubs) слов (выброшено \(droppedSubs)), из словаря +\(dictAdded.count) (выброшено \(droppedDict)), \
-итого \(byHash.count) записей, \(out.count / 1024 / 1024) МБ, \(Int(Date().timeIntervalSince(started))) с
+ё: \(yoWords.count), итого \(byHash.count) записей, \(out.count / 1024 / 1024) МБ, \(Int(Date().timeIntervalSince(started))) с
 """)

@@ -201,7 +201,7 @@ final class Switcher {
                    brain.joinFix(prev: p.shownText, cur: text, .ru) {
                     // переписываем оба слова целиком, чтобы ёфикатор мог поправить и первое (все таки -> всё-таки)
                     var joined = p.shownText + "-" + text
-                    if store.config.yo, let y = Yo.fix(brain.core(joined)) { joined = joined.replacingOccurrences(of: brain.core(joined), with: y) }
+                    if store.config.yo, let y = brain.yoFix(brain.core(joined)) { joined = joined.replacingOccurrences(of: brain.core(joined), with: y) }
                     replace(count: p.shownText.count + 1 + typed.count + 1, with: joined + " ")
                     var r = rec
                     r.restore = p.shownText + " " + typed

@@ -46,6 +46,9 @@ final class FreqModel {
         return Double(n) / total * 1_000_000
     }
 
+    /// Ёфикатор: слово с «ё», которое в живой речи пишут через «ё» (метку ставит tools/BuildModel.swift).
+    func isYo(_ word: String) -> Bool { rawCount("ё>" + word) > 0 }
+
     static func load(_ l: Lang) -> FreqModel? {
         let name = l.code
         if let url = Bundle.main.url(forResource: name, withExtension: "bin"), let m = FreqModel(url: url) { return m }
