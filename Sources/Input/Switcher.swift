@@ -1,5 +1,3 @@
-// Перехват клавиатуры: буфер слова, одиночный/двойной Shift, отправка исправлений.
-
 import Cocoa
 
 final class Switcher {
@@ -14,8 +12,15 @@ final class Switcher {
 
     var buffer: [Stroke] = [] {
         // новое слово — переключение посреди слова снова разрешено
-        didSet { if buffer.isEmpty { liveFrom = nil; liveLocked = false } }
+        didSet {
+            if buffer.isEmpty {
+                liveFrom = nil
+                liveLocked = false
+                liveTrigrams = nil
+            }
+        }
     }
+    var liveTrigrams: Brain.LiveTrigrams?
     var liveFrom: Lang?      // слово переключили посреди набора — из какой раскладки
     var liveLocked = false   // в этом слове переключать посреди набора больше нельзя (отменили двойным Shift)
     var keySerial = 0  // растёт на каждое нажатие — чтобы не исправлять, если вы уже печатаете дальше
@@ -40,7 +45,16 @@ final class Switcher {
 
     func resetAll() {
         buffer.removeAll()
+        liveTrigrams = nil
         lastWord = nil
+    }
+
+    /// После ручной правки или смены раскладки строим состояние один раз;
+    /// обычная клавиша добавляет к нему только новую триграмму.
+    func rebuildLiveTrigrams() {
+        var state = brain.beginLiveTrigrams(typedIn: bufferLang)
+        for stroke in buffer { brain.appendLiveTrigram(stroke, to: &state) }
+        liveTrigrams = state
     }
 
     func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
@@ -109,6 +123,7 @@ final class Switcher {
             let target = bufferLang.other
             replace(count: layouts.render(buffer, bufferLang).count, with: layouts.render(buffer, target))
             bufferLang = target
+            rebuildLiveTrigrams()
             liveFrom = nil
             liveLocked = true
             layouts.select(target)
@@ -154,11 +169,20 @@ final class Switcher {
         case kBackspace:
             if !buffer.isEmpty {
                 buffer.removeLast()
-            } else if let w = lastWord, w.boundaryKey == kSpace, w.shownText == layouts.render(w.strokes, w.shownLang) {
-                // стёрли пробел — продолжаем редактировать прошлое слово
-                buffer = w.strokes
-                bufferLang = w.shownLang
-                lastWord = nil
+                liveTrigrams = nil
+            } else if let w = lastWord, w.boundaryKey == kSpace {
+                // Стёрли пробел: продолжаем редактировать именно видимый вариант, в том числе после
+                // ёфикации или исправления опечатки. Если символы нельзя точно представить клавишами,
+                // безопаснее отдать Backspace приложению, чем получить рассинхрон буфера.
+                let editable = layouts.strokes(for: w.shownText, in: w.shownLang)
+                if layouts.render(editable, w.shownLang) == w.shownText {
+                    buffer = editable
+                    bufferLang = w.shownLang
+                    liveTrigrams = nil
+                    lastWord = nil
+                } else {
+                    lastWord = nil
+                }
             } else {
                 lastWord = nil
             }
@@ -173,11 +197,18 @@ final class Switcher {
             if buffer.isEmpty || bufferLang != lang {
                 buffer.removeAll()
                 bufferLang = lang
+                liveTrigrams = brain.beginLiveTrigrams(typedIn: lang)
             }
             var m = 0
             if f.contains(.maskShift) { m |= 1 }
             if f.contains(.maskAlphaShift) { m |= 2 }
-            buffer.append(Stroke(key: key, mods: m))
+            let stroke = Stroke(key: key, mods: m)
+            buffer.append(stroke)
+            if liveTrigrams == nil { rebuildLiveTrigrams() }
+            else if var state = liveTrigrams {
+                brain.appendLiveTrigram(stroke, to: &state)
+                liveTrigrams = state
+            }
             if buffer.count > 64 { buffer.removeAll() }
             liveCheck()
             return pass(e)
@@ -188,12 +219,14 @@ final class Switcher {
     /// для языка сочетание букв, а в другой — нормальное (ghbd… -> прив…). Один раз на слово.
     func liveCheck() {
         guard store.config.autoSwitch, frontMode == .auto, liveFrom == nil, !liveLocked, buffer.count >= 4 else { return }
+        guard let evidence = liveTrigrams, brain.liveTrigramCandidate(evidence, typedIn: bufferLang) else { return }
         let serial = keySerial, strokes = buffer, lang = bufferLang
         DispatchQueue.main.async { [self] in
-            guard keySerial == serial, let target = brain.liveSwitch(strokes, typedIn: lang) else { return }
+            guard keySerial == serial, let target = brain.liveSwitch(strokes, typedIn: lang, evidence: evidence) else { return }
             replace(count: layouts.render(strokes, lang).count, with: layouts.render(strokes, target))
             layouts.select(target)
             bufferLang = target
+            rebuildLiveTrigrams()
             liveFrom = lang
             store.play(store.config.switchSound)
         }
@@ -211,8 +244,11 @@ final class Switcher {
                              boundaryKey: key, restore: from.map { layouts.render(word, $0) } ?? typed)
         let prev = lastWord  // слово прямо перед этим (lastWord сбрасывается мышью, стрелками, двойным пробелом)
         lastWord = rec
-        if typed.contains(where: { $0.isLetter }) { brain.lastLang = lang }
-        guard store.config.autoSwitch && frontMode == .auto else { return pass(e) }
+        // `lastLang` должен оставаться языком предыдущего слова, пока Brain выбирает раскладку этого.
+        guard store.config.autoSwitch && frontMode == .auto else {
+            if typed.contains(where: { $0.isLetter }) { brain.lastLang = lang }
+            return pass(e)
+        }
 
         if key == kSpace {
             // Пробел пропускаем сразу, слово проверяем следом — клавиатура не ждёт словаря.
@@ -235,14 +271,20 @@ final class Switcher {
                     applied(Decision(lang: textLang, text: joined, kind: .typo), to: r)
                     return
                 }
-                guard let d, d.text != typed else { return }
+                guard let d, d.text != typed else {
+                    if typed.contains(where: { $0.isLetter }) { brain.lastLang = textLang }
+                    return
+                }
                 replace(count: typed.count + 1, with: d.text + " ")
                 applied(d, to: rec)
             }
             return pass(e)
         }
         // Enter и Tab отправить «потом» нельзя (сообщение уже уйдёт), поэтому здесь решаем сразу.
-        guard let d = brain.decide(word, typedIn: lang), d.text != typed else { return pass(e) }
+        guard let d = brain.decide(word, typedIn: lang), d.text != typed else {
+            if typed.contains(where: { $0.isLetter }) { brain.lastLang = lang }
+            return pass(e)
+        }
         replace(count: typed.count, with: d.text)
         postKey(key, flags: e.flags.intersection(.maskShift))
         applied(d, to: rec)
@@ -312,6 +354,7 @@ final class Switcher {
     }
 
     func startTap() -> Bool {
+        if tap != nil { return true }
         let mask: CGEventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.flagsChanged.rawValue)
             | (1 << CGEventType.leftMouseDown.rawValue) | (1 << CGEventType.rightMouseDown.rawValue)
             | (1 << CGEventType.otherMouseDown.rawValue)

@@ -10,7 +10,18 @@ mkdir -p "$APP/Contents/MacOS"
 mkdir -p "$APP/Contents/Resources"
 cp model/ru.bin model/en.bin assets/AppIcon.icns "$APP/Contents/Resources/"
 
-swiftc -O -swift-version 5 *.swift -o "$APP/Contents/MacOS/UnCarambaSwitcher" -framework Cocoa -framework Carbon -framework SwiftUI
+# Package.swift нужен SourceKit-LSP/SwiftPM и не является исходником приложения.
+SOURCES=(
+  Sources/Language/Brain.swift
+  Sources/Language/Layouts.swift
+  Sources/Language/Model.swift
+  Sources/Configuration/Store.swift
+  Sources/Input/Switcher.swift
+  Sources/Services/Updater.swift
+  Sources/UI/Settings.swift
+  Sources/App/main.swift
+)
+swiftc -O -swift-version 5 "${SOURCES[@]}" -o "$APP/Contents/MacOS/UnCarambaSwitcher" -framework Cocoa -framework Carbon -framework SwiftUI
 
 VERSION=${VERSION:-1.0}
 cat > "$APP/Contents/Info.plist" <<EOF

@@ -1,14 +1,9 @@
-// UnCarambaSwitcher — простой автопереключатель раскладки EN <-> RU для macOS.
-// Сборка: ./build.sh
-
 import Cocoa
 import Carbon
 import SwiftUI
 
 let sw = Switcher()
 let tapCallback: CGEventTapCallBack = { _, type, event, _ in sw.handle(type: type, event: event) }
-
-// MARK: - Строка меню
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var item: NSStatusItem!
@@ -40,7 +35,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         refreshTitle()
         updater.start()
-        // Прогрев словарей сейчас и раз в 10 минут, чтобы первое слово не тормозило.
         DispatchQueue.main.async { sw.brain.warmUp() }
         Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { _ in sw.brain.warmUp() }
         if !sw.startTap() {
@@ -178,7 +172,7 @@ if CommandLine.arguments.contains("--test") {
     store.config.words = [WordRule(word: "спб", kind: .replace, replacement: "Санкт-Петербург")]
     let brain = Brain(layouts: layouts, store: store)
     let cases: [(String, Lang)] = [
-        ("ghbdtn", .en), ("привет", .ru), ("hello", .en), ("руддщ", .ru), ("ghbdtn?", .en), ("руддщб", .ru),
+        ("ghbdtn", .en), ("привет", .ru), ("hello", .en), ("руддщ", .ru), ("руку", .ru), ("ghbdtn?", .en), ("руддщб", .ru),
         ("ПРивет", .ru), ("GHbdtn", .en), ("yt", .en), ("не", .ru), ("rfr", .en), ("ckjdj", .en),
         ("ыщьуерштп", .ru), ("Qwerty12!", .en), ("123", .en), ("rnj-nj", .en),
         // опечатки
@@ -199,6 +193,14 @@ if CommandLine.arguments.contains("--test") {
     for (text, lang) in cases {
         let r = brain.decide(layouts.strokes(for: text, in: lang), typedIn: lang)
         print(text.padding(toLength: 12, withPad: " ", startingAt: 0), "->", r.map { "\($0.text)  [\($0.lang.title), \($0.kind)]" } ?? "(оставить)")
+    }
+    print("— live-переключение —")
+    for (text, lang) in [("ghbdtn", Lang.en), ("руку", .ru)] {
+        let strokes = layouts.strokes(for: text, in: lang)
+        var evidence = brain.beginLiveTrigrams(typedIn: lang)
+        for stroke in strokes { brain.appendLiveTrigram(stroke, to: &evidence) }
+        let target = brain.liveSwitch(strokes, typedIn: lang, evidence: evidence)
+        print("~\(text)".padding(toLength: 12, withPad: " ", startingAt: 0), "->", target?.title ?? "(оставить)")
     }
     print("— склейка двух слов —")
     for (a, b) in [("во", "первых"), ("во", "вторых,"), ("в", "третьих"), ("из", "за"), ("по", "прежнему"), ("по", "русски"), ("кое", "как"),

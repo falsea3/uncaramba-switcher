@@ -1,5 +1,3 @@
-// Окно настроек: Основные / Программы / Слова.
-
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -16,8 +14,6 @@ struct SettingsView: View {
         .frame(width: 640, height: 480)
     }
 }
-
-// MARK: - Основные
 
 struct GeneralTab: View {
     @ObservedObject var store: Store
@@ -52,7 +48,6 @@ struct GeneralTab: View {
     }
 
     private func soundPicker(_ title: String, _ sel: Binding<String>) -> some View {
-        // при выборе сразу проигрываем звук
         let playing = Binding(get: { sel.wrappedValue }, set: { name in
             sel.wrappedValue = name
             if !name.isEmpty { NSSound(named: NSSound.Name(name))?.play() }
@@ -64,8 +59,6 @@ struct GeneralTab: View {
         .disabled(!store.config.sounds)
     }
 }
-
-// MARK: - Программы
 
 struct AppsTab: View {
     @ObservedObject var store: Store
@@ -147,8 +140,6 @@ func appInfo(_ id: String) -> (name: String, icon: NSImage?) {
     return (name, NSWorkspace.shared.icon(forFile: url.path))
 }
 
-// MARK: - Слова
-
 struct WordsTab: View {
     @ObservedObject var store: Store
     @State private var search = ""
@@ -205,7 +196,6 @@ struct WordsTab: View {
                 })
     }
 
-    /// Импорт: JSON-массив правил (как при экспорте) или текст «слово -> замена» / «слово» построчно.
     private func importRules() {
         let p = NSOpenPanel()
         p.allowedContentTypes = [.json, .plainText]

@@ -49,3 +49,4 @@ offline
 login
 logout
 wifi
+jwt

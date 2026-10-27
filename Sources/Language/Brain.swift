@@ -1,6 +1,3 @@
-// Языковая логика: что сделать с только что набранным словом.
-// Решения принимаются только по модели (FreqModel): частоты из субтитров + полный словарь словоформ.
-
 import Cocoa
 
 struct Decision {
@@ -11,6 +8,18 @@ struct Decision {
 }
 
 final class Brain {
+    /// Накопленная оценка открытого слова для live-переключения.
+    /// Хранит только последние две буквы и суммы лог-вероятностей: следующая клавиша добавляет ровно одну триграмму.
+    struct LiveTrigrams {
+        fileprivate let typedIn: Lang
+        fileprivate var currentTail: [Character] = [" "]
+        fileprivate var otherTail: [Character] = [" "]
+        fileprivate var currentScore = 0.0
+        fileprivate var otherScore = 0.0
+        fileprivate var trigramCount = 0
+        fileprivate var letterCount = 0
+    }
+
     let layouts: Layouts
     let store: Store
     let models: [Lang: FreqModel]
@@ -363,45 +372,107 @@ final class Brain {
 
     // MARK: Решение
 
-    // MARK: Буквенные триграммы
+    // MARK: Шаг 1. Раскладка: буквенные триграммы
 
-    /// Пороги подобраны замером на словах из модели (см. --calibrate).
-    static var triMarginBoundary = 2.0
-    static var triMarginLive = 2.5
+    /// Разрыв оценок, при котором раскладка считается определённой (подобран замером на словах модели).
+    // Посреди слова цена ложного срабатывания выше, поэтому порог строже, чем на границе слова.
+    static var gapLive = 3.0
+    static var gapBoundary = 2.0
+    /// Русский — базовая раскладка: небольшой prior разрешает пограничные случаи в его пользу,
+    /// но не перекрывает уверенный сигнал английских триграмм.
+    static let russianPrior = log(1.5)
+    private static let unseenLog = log(0.5 / 1e9)
 
-    /// Насколько строка похожа на слово языка: средний логарифм вероятности буквенных триграмм
-    /// и число сочетаний, которых в языке не бывает. closed — слово закончено (учитываем правый край).
-    func plausibility(_ w: String, _ l: Lang, closed: Bool) -> (avg: Double, unseen: Int)? {
-        guard let m = models[l] else { return nil }
-        let s = Array(" " + w.lowercased().replacingOccurrences(of: "ё", with: "е") + (closed ? " " : ""))
-        guard s.count >= 3 else { return nil }
-        var sum = 0.0, unseen = 0
-        for i in 0..<(s.count - 2) {
-            let v = m.trigram(String(s[i...(i + 2)]))
-            if v == 0 { unseen += 1 }
-            sum += log(max(v, 0.5) / 1e9)
+    func beginLiveTrigrams(typedIn lang: Lang) -> LiveTrigrams {
+        LiveTrigrams(typedIn: lang)
+    }
+
+    /// Добавляет к live-оценке одно нажатие, не пересчитывая уже обработанную часть слова.
+    func appendLiveTrigram(_ stroke: Stroke, to state: inout LiveTrigrams) {
+        let current = layouts.render([stroke], state.typedIn)
+        let other = layouts.render([stroke], state.typedIn.other)
+        state.letterCount += max(current.filter(\.isLetter).count, other.filter(\.isLetter).count)
+        appendLiveChars(current, lang: state.typedIn,
+                        tail: &state.currentTail, score: &state.currentScore, count: &state.trigramCount)
+        // Счётчик триграмм одинаков у обеих раскладок: для одного нажатия появляется одна тройка.
+        var otherCount = state.trigramCount
+        appendLiveChars(other, lang: state.typedIn.other,
+                        tail: &state.otherTail, score: &state.otherScore, count: &otherCount)
+    }
+
+    private func appendLiveChars(_ text: String, lang: Lang, tail: inout [Character], score: inout Double, count: inout Int) {
+        for ch in text.lowercased().replacingOccurrences(of: "ё", with: "е") {
+            tail.append(ch)
+            guard tail.count >= 3 else { continue }
+            let t = String(tail.suffix(3))
+            let allowed = t.allSatisfy { $0.isLetter || $0 == " " || $0 == "-" || (lang == .en && $0 == "'") }
+            let value = allowed ? models[lang]?.trigram(t) ?? 0 : 0
+            score += value > 0 ? log(value / 1e9) : Brain.unseenLog
+            count += 1
+            tail.removeFirst()
         }
-        return (sum / Double(s.count - 2), unseen)
     }
 
-    /// `a` (в языке la) правдоподобнее `b` (в языке lb): в `b` есть невозможное сочетание букв, в `a` нет,
-    /// и в среднем `a` заметно вероятнее.
-    func trigramPrefers(_ a: String, _ la: Lang, over b: String, _ lb: Lang, closed: Bool, margin: Double) -> Bool {
-        guard a.count >= 4, a.allSatisfy({ $0.isLetter }), b.allSatisfy({ $0.isLetter }),
-              let pa = plausibility(a, la, closed: closed), let pb = plausibility(b, lb, closed: closed)
-        else { return false }
-        return pb.unseen > 0 && pa.unseen == 0 && pa.avg - pb.avg > margin
+    /// Средний логарифм вероятности буквенных триграмм строки в языке.
+    /// Сочетание, которого в языке не бывает, и знак на месте буквы — одинаково маловероятны.
+    func plausibility(_ w: String, _ l: Lang, closed: Bool) -> Double? {
+        guard let m = models[l] else { return nil }
+        let chars = Array(" " + w.lowercased().replacingOccurrences(of: "ё", with: "е") + (closed ? " " : ""))
+        guard chars.count >= 3 else { return nil }
+        var sum = 0.0
+        for i in 0..<(chars.count - 2) {
+            let t = chars[i...(i + 2)]
+            let ok = t.allSatisfy { $0.isLetter || $0 == " " || $0 == "-" || (l == .en && $0 == "'") }
+            let v = ok ? m.trigram(String(t)) : 0
+            sum += v > 0 ? log(v / 1e9) : Brain.unseenLog
+        }
+        return sum / Double(chars.count - 2)
     }
 
-    /// Переключение посреди слова: по уже набранным буквам (от 4). nil — оставить как есть.
-    func liveSwitch(_ strokes: [Stroke], typedIn lang: Lang) -> Lang? {
-        guard strokes.count >= 4 else { return nil }
+    /// Какая раскладка вероятнее по триграммам: сравниваем оценки обеих, nil — разрыв мал, решать рано.
+    /// Знаки, которые остаются знаками в обеих раскладках (запятая в конце), не учитываются.
+    func trigramLayout(_ strokes: [Stroke], _ lang: Lang, closed: Bool, gap: Double, minLetters: Int) -> Lang? {
         let other = lang.other
-        let cur = layouts.render(strokes, lang), oth = layouts.render(strokes, other)
-        let key = cur.lowercased()
-        // начало слова, которое вы просили не трогать или которое уже является словом, — не трогаем
-        if store.never.contains(where: { $0.hasPrefix(key) }) || known(cur, lang) { return nil }
-        return trigramPrefers(oth, other, over: cur, lang, closed: false, margin: Brain.triMarginLive) ? other : nil
+        let a = Array(layouts.render(strokes, lang)), b = Array(layouts.render(strokes, other))
+        guard a.count == b.count else { return nil }
+        var s = 0, e = a.count
+        while s < e, !a[s].isLetter, !b[s].isLetter { s += 1 }
+        while e > s, !a[e - 1].isLetter, !b[e - 1].isLetter { e -= 1 }
+        guard e - s >= minLetters,
+              let pa = plausibility(String(a[s..<e]), lang, closed: closed),
+              let pb = plausibility(String(b[s..<e]), other, closed: closed) else { return nil }
+        let adjustedA = pa + (lang == .ru ? Brain.russianPrior : 0)
+        let adjustedB = pb + (other == .ru ? Brain.russianPrior : 0)
+        if adjustedB - adjustedA >= gap { return other }
+        if adjustedA - adjustedB >= gap { return lang }
+        return nil
+    }
+
+    /// Быстрая проверка без словаря и рендера всего буфера. Нужна, чтобы не ставить main-очередь
+    /// после каждой клавиши: задача появится только при уже уверенном кандидате на переключение.
+    func liveTrigramCandidate(_ evidence: LiveTrigrams, typedIn lang: Lang) -> Bool {
+        guard evidence.typedIn == lang, evidence.letterCount >= 4, evidence.trigramCount > 0 else { return false }
+        let current = evidence.currentScore / Double(evidence.trigramCount) + (lang == .ru ? Brain.russianPrior : 0)
+        let other = evidence.otherScore / Double(evidence.trigramCount) + (lang.other == .ru ? Brain.russianPrior : 0)
+        return other - current >= Brain.gapLive
+    }
+
+    /// Во время набора: с 4-й буквы, если триграммы уверенно за другую раскладку. Само слово не трогаем.
+    func liveSwitch(_ strokes: [Stroke], typedIn lang: Lang, evidence: LiveTrigrams? = nil) -> Lang? {
+        let current = layouts.render(strokes, lang)
+        let key = core(current).lowercased()
+        if store.never.contains(where: { $0.hasPrefix(key) }) { return nil }
+        // Уже получившееся известное слово не портим только статистическим перевесом другой раскладки.
+        // В частности, это защищает «руку» от преждевременного перехода в `here`.
+        if known(core(current), lang) { return nil }
+        let t: Lang?
+        if let evidence, evidence.typedIn == lang, evidence.letterCount >= 4, evidence.trigramCount > 0 {
+            t = liveTrigramCandidate(evidence, typedIn: lang) ? lang.other : nil
+        } else {
+            // Запасной путь нужен тестам и редактированию уже накопленного буфера.
+            t = trigramLayout(strokes, lang, closed: false, gap: Brain.gapLive, minLetters: 4)
+        }
+        return t == lang.other ? t : nil
     }
 
     /// Ёфикатор по модели: пробуем заменить одну «е» на «ё» и смотрим, есть ли такое слово с меткой ё.
@@ -438,79 +509,79 @@ final class Brain {
         return Decision(lang: l, text: t, kind: k)
     }
 
-    /// Стоит ли переключить раскладку: сравниваем, насколько вероятно слово в каждой из них.
-    private func switchDecision(_ cur: String, _ oth: String, _ lang: Lang) -> Decision? {
+    /// Шаг 1, запасной путь — когда триграммы не уверены (короткое слово, маленький разрыв):
+    /// словарь, частоты и язык предыдущего слова. Возвращает раскладку, слово не меняет.
+    private func dictionaryLayout(_ cur: String, _ oth: String, _ lang: Lang) -> Lang {
         let other = lang.other
         let curCore = core(cur), othCore = core(oth)
         // набрано без единой буквы (запятая, точка с запятой) — это знак, а не слово: не переключаем («,» -> «б»)
-        guard !curCore.isEmpty, !othCore.isEmpty, oth.filter({ !$0.isLetter && $0 != "-" }).count <= 1 else { return nil }
-        if let f = capsFix(cur), known(core(f), lang) { return nil }
-        if tricks(cur, lang) != nil { return nil }
-
+        guard !curCore.isEmpty, !othCore.isEmpty, oth.filter({ !$0.isLetter && $0 != "-" }).count <= 1 else { return lang }
         let curKnown = known(curCore, lang)
         if othCore.count == 1 {
             // одиночные буквы переключаем только если предыдущее слово было на том языке
-            return (!curKnown && known(othCore, other) && lastLang == other) ? finish(other, oth, .switchLayout) : nil
+            return (!curKnown && known(othCore, other) && lastLang == other) ? other : lang
         }
-        let cand = capsFix(oth).flatMap { known(core($0), other) ? $0 : nil } ?? oth
-        let othF = freq(core(cand), other)
-        guard othF > 0 else { return nil }
-        if !curKnown { return finish(other, cand, .switchLayout) }
+        let othCand = capsFix(oth).flatMap { known(core($0), other) ? core($0) : nil } ?? othCore
+        let othF = freq(othCand, other)
+        guard othF > 0 else { return lang }
+        if !curKnown { return other }
         // слово существует в обеих раскладках — решает частота
         let curF = freq(curCore, lang)
         // текущее есть только в полном словаре (в живой речи не встречается), а «чужое» — живое слово
-        if curF < Brain.dictionaryOnly && othF >= Brain.common { return finish(other, cand, .switchLayout) }
+        if curF < Brain.dictionaryOnly && othF >= Brain.common { return other }
         // оба живые: переключаем, только если «чужое» в сотни раз частотнее и предыдущее слово было на том языке
         // (иначе «vs» посреди английского текста станет «мы»)
-        if lastLang == other && othF >= Brain.common && othF > curF * 300 { return finish(other, cand, .switchLayout) }
+        if lastLang == other && othF >= Brain.common && othF > curF * 300 { return other }
         // приоритет русского: если сейчас не пишем по-английски, хватает 5-кратного перевеса (bp -> из, jr -> ок)
-        if other == .ru && lastLang != .en && othF >= Brain.common && othF > curF * 5 { return finish(other, cand, .switchLayout) }
-        return nil
+        if other == .ru && lastLang != .en && othF >= Brain.common && othF > curF * 5 { return other }
+        return lang
     }
 
-    /// Что сделать со словом, набранным в раскладке `lang`. nil — ничего.
+    /// Что сделать с дописанным словом, набранным в раскладке `lang`. nil — ничего.
+    /// Строго по шагам: 0) ваши правила; 1) раскладка — триграммы, а если не уверены — словарь и контекст;
+    /// 2) правописание уже внутри выбранного языка; 3) ёфикатор (в finish).
     func decide(_ strokes: [Stroke], typedIn lang: Lang) -> Decision? {
         let other = lang.other
         let cur = layouts.render(strokes, lang), oth = layouts.render(strokes, other)
         let curCore = core(cur), othCore = core(oth)
         let key = curCore.lowercased()
 
-        // Пользовательские правила
+        // 0. Ваши правила
         for (text, c, l) in [(cur, curCore, lang), (oth, othCore, other)] {
             if let rep = store.replace[c.lowercased()] {
                 return Decision(lang: langOf(rep) ?? l, text: swapCore(text, matchCase(rep, like: c)), kind: .replace)
             }
         }
         if store.never.contains(key) { return nil }
-        if store.always.contains(key) { return finish(other, oth, .switchLayout) }
-
         if lang == .ru && looksLikePassword(oth) && !known(curCore, .ru) {
-            return Decision(lang: .en, text: oth, kind: .switchLayout)
+            return Decision(lang: .en, text: oth, kind: .switchLayout)  // пароль — без правописания
         }
 
-        if let d = switchDecision(cur, oth, lang) { return d }
-
-        // Слово в текущей раскладке
-        if let f = capsFix(cur), known(core(f), lang) { return finish(lang, f, .caps) }
-        // существующее слово не меняем — только ёфикатор и пунктуация на краях (привет1 -> привет!)
-        if known(curCore, lang) { return finish(lang, cur, nil) }
-        if let tr = tricks(cur, lang) { return finish(lang, tr, .typo) }
-
-        // Опечатки: сначала в текущей раскладке, потом (строже) — в другой
-        if config.typos {
-            if let f = typoFix(cur, lang) { return finish(lang, f, .typo) }
-            // опечатка в чужой раскладке — только для слов от 5 букв (иначе скуф -> crew) и только если набранное
-            // не похоже на свой язык: в нём есть невозможное сочетание букв (иначе билде -> ,bklt -> bolt)
-            if curCore.count >= 5, (plausibility(curCore, lang, closed: true)?.unseen ?? 0) > 0,
-               let f = typoFix(oth, other, minScore: 5) { return finish(other, f, .switchLayout) }
+        // 1. Раскладка
+        let target: Lang
+        if store.always.contains(key) {
+            target = other
+        } else if known(curCore, lang) {
+            // Когда оба варианта выглядят как слова, триграммный перевес недостаточен: разрешаем
+            // неоднозначность частотами и предыдущим словом. Так правильное «руку» не станет `here`.
+            target = dictionaryLayout(cur, oth, lang)
+        } else if let t = trigramLayout(strokes, lang, closed: true, gap: Brain.gapBoundary, minLetters: 3) {
+            target = t
+        } else {
+            target = dictionaryLayout(cur, oth, lang)
         }
 
-        // Слова нет ни в одной раскладке (новое слово, имя, склейка) — решают буквенные триграммы
-        if !store.never.contains(key),
-           trigramPrefers(othCore, other, over: curCore, lang, closed: true, margin: Brain.triMarginBoundary) {
-            return finish(other, oth, .switchLayout)
-        }
-        return nil
+        // 2. Правописание — уже внутри выбранного языка, язык здесь не меняется
+        let text = target == lang ? cur : oth
+        let kind: Decision.Kind? = target == lang ? nil : .switchLayout
+        if let f = capsFix(text), known(core(f), target) { return finish(target, f, kind ?? .caps) }
+        // существующее слово не меняем — только ёфикатор и знак на краю (привет1 -> привет!)
+        if known(core(text), target) { return finish(target, text, kind) }
+        if let tr = tricks(text, target) { return finish(target, tr, kind ?? .typo) }
+        if config.typos, let f = typoFix(text, target) { return finish(target, f, kind ?? .typo) }
+
+        // 3. Ёфикатор и знаки на краях — в finish
+        return finish(target, text, kind)
     }
 
     /// Подтягиваем страницы модели в память заранее, а не на первом пробеле.

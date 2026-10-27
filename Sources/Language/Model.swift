@@ -1,6 +1,3 @@
-// Частотная модель языка: сколько раз слово встречается в живой речи (субтитры OpenSubtitles).
-// Файл строит tools/BuildModel.swift; здесь он отображается в память и ищется двоичным поиском.
-
 import Foundation
 
 final class FreqModel {
@@ -22,7 +19,6 @@ final class FreqModel {
         return h
     }
 
-    /// Сколько раз слово встречалось (слово уже в нижнем регистре).
     func rawCount(_ word: String) -> Int {
         let h = FreqModel.fnv(word)
         return data.withUnsafeBytes { raw -> Int in
@@ -38,7 +34,6 @@ final class FreqModel {
         }
     }
 
-    /// Частота на миллион слов. «ё» и «е» считаются вместе — в живых текстах «ё» часто не пишут.
     func perMillion(_ word: String) -> Double {
         let w = word.lowercased()
         var n = rawCount(w)
@@ -46,16 +41,13 @@ final class FreqModel {
         return Double(n) / total * 1_000_000
     }
 
-    /// Доля буквенной триграммы на миллиард (0 — такое сочетание в языке не встречалось). Пробел — край слова.
     func trigram(_ t: String) -> Double { Double(rawCount("3>" + t)) }
 
-    /// Ёфикатор: слово с «ё», которое в живой речи пишут через «ё» (метку ставит tools/BuildModel.swift).
     func isYo(_ word: String) -> Bool { rawCount("ё>" + word) > 0 }
 
     static func load(_ l: Lang) -> FreqModel? {
         let name = l.code
         if let url = Bundle.main.url(forResource: name, withExtension: "bin"), let m = FreqModel(url: url) { return m }
-        // при запуске не из .app (например, во время разработки)
         let local = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
             .appendingPathComponent("model/\(name).bin")
         return FreqModel(url: local)

@@ -1,8 +1,5 @@
-// Настройки, программы-исключения и слова-исключения. Всё хранится в config.json.
-
 import Cocoa
 
-/// Как программа ведёт себя в конкретном приложении.
 enum AppMode: String, Codable, CaseIterable {
     case auto, manual, off
     var title: String {
@@ -33,7 +30,7 @@ struct WordRule: Codable, Identifiable, Hashable {
 }
 
 struct AppRule: Codable, Identifiable, Hashable {
-    var bundleID: String   // может заканчиваться на * — тогда это префикс
+    var bundleID: String
     var mode: AppMode
     var id: String { bundleID }
 }
@@ -64,7 +61,6 @@ extension Config: Codable {
         case autoSwitch, shiftSwitch, typos, yo, tricks, gamesOff, sounds, switchSound, typoSound, apps, words
     }
 
-    // Недостающие в файле поля берутся по умолчанию — так старый config.json переживёт обновления.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = Config()
@@ -88,7 +84,6 @@ final class Store: ObservableObject {
         didSet { rebuild(); save() }
     }
 
-    // Быстрые таблицы для проверки слов (ключ — слово в нижнем регистре)
     private(set) var never: Set<String> = []
     private(set) var always: Set<String> = []
     private(set) var replace: [String: String] = [:]
@@ -107,7 +102,6 @@ final class Store: ObservableObject {
 
     var configFile: URL { dir.appendingPathComponent("config.json") }
 
-    /// Перенос выученных слов из первой версии (never.txt / always.txt).
     private func migrateTxt() {
         func lines(_ n: String) -> [String] {
             ((try? String(contentsOf: dir.appendingPathComponent(n), encoding: .utf8)) ?? "")
@@ -136,7 +130,6 @@ final class Store: ObservableObject {
         if let data = try? enc.encode(config) { try? data.write(to: configFile, options: .atomic) }
     }
 
-    /// Запоминает слово после двойного Shift (nil — забыть).
     func learn(_ word: String, _ kind: WordKind?) {
         let k = word.lowercased()
         guard !k.isEmpty else { return }

@@ -1,6 +1,3 @@
-// Автообновление из GitHub Releases: раз в 10 минут смотрим последний релиз,
-// если версия новее — предлагаем обновиться, скачиваем DMG, подменяем приложение и перезапускаемся.
-
 import Cocoa
 
 final class Updater {
@@ -14,7 +11,7 @@ final class Updater {
 
     private(set) var available: Release?
     private(set) var installing = false
-    private var asked: Set<String> = []  // о какой версии уже спрашивали в этом запуске
+    private var asked: Set<String> = []
     private var timer: Timer?
     var onChange: (() -> Void)?
 
@@ -27,7 +24,6 @@ final class Updater {
         timer = Timer.scheduledTimer(withTimeInterval: Updater.interval, repeats: true) { [weak self] _ in self?.check() }
     }
 
-    /// 1.10.0 > 1.9.2; недостающие части считаются нулями (1.0 == 1.0.0).
     static func isNewer(_ a: String, than b: String) -> Bool {
         let x = a.split(separator: ".").map { Int($0) ?? 0 }, y = b.split(separator: ".").map { Int($0) ?? 0 }
         for i in 0..<max(x.count, y.count) {
@@ -94,18 +90,21 @@ final class Updater {
         }.resume()
     }
 
-    /// Монтируем DMG, копируем .app рядом с текущим и подменяем им текущее приложение.
     private func replaceApp(fromDMG dmg: URL) throws {
         let fm = FileManager.default
         let mount = fm.temporaryDirectory.appendingPathComponent("uncaramba-update-\(UUID().uuidString)")
         try fm.createDirectory(at: mount, withIntermediateDirectories: true)
         try run("/usr/bin/hdiutil", ["attach", dmg.path, "-nobrowse", "-noverify", "-mountpoint", mount.path])
-        defer { try? run("/usr/bin/hdiutil", ["detach", mount.path, "-force"]) }
+        defer {
+            try? run("/usr/bin/hdiutil", ["detach", mount.path, "-force"])
+            try? fm.removeItem(at: mount)
+        }
 
         guard let app = try fm.contentsOfDirectory(at: mount, includingPropertiesForKeys: nil).first(where: { $0.pathExtension == "app" })
         else { throw CocoaError(.fileNoSuchFile) }
         let dest = Bundle.main.bundleURL
         let staged = dest.deletingLastPathComponent().appendingPathComponent(".\(dest.lastPathComponent).new")
+        defer { try? fm.removeItem(at: staged) }
         try? fm.removeItem(at: staged)
         try run("/usr/bin/ditto", [app.path, staged.path])
         _ = try fm.replaceItemAt(dest, withItemAt: staged)

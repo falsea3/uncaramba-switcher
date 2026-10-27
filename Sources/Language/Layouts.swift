@@ -1,9 +1,5 @@
-// Модель и чтение раскладок клавиатуры.
-
 import Cocoa
 import Carbon
-
-// MARK: - Модель
 
 enum Lang {
     case en, ru
@@ -12,7 +8,6 @@ enum Lang {
     var title: String { self == .en ? "EN" : "RU" }
 }
 
-/// Одно нажатие: код клавиши + модификаторы (bit0 = Shift, bit1 = CapsLock).
 struct Stroke {
     let key: UInt16
     let mods: Int
@@ -20,23 +15,21 @@ struct Stroke {
 
 struct WordRecord {
     let strokes: [Stroke]
-    let typedLang: Lang     // в какой раскладке набрано руками
-    var shownLang: Lang     // что сейчас на экране
+    let typedLang: Lang
+    var shownLang: Lang
     var shownText: String
-    var auto: Bool          // true, если мы сами исправили слово
-    let boundaryKey: UInt16 // чем закончилось слово (пробел / enter / tab)
-    var restore: String     // что вернуть при отмене (для склейки «во-первых» — оба слова через пробел)
-    var joined: String? = nil  // склеенное через дефис слово, если была склейка
+    var auto: Bool
+    let boundaryKey: UInt16
+    var restore: String
+    var joined: String? = nil
 }
 
 let kSpace: UInt16 = 49, kReturn: UInt16 = 36, kEnter: UInt16 = 76, kTab: UInt16 = 48, kBackspace: UInt16 = 51
-let MAGIC: Int64 = 0xCA4AB4  // метка наших собственных событий
-
-// MARK: - Раскладки
+let MAGIC: Int64 = 0xCA4AB4
 
 final class Layouts {
     private(set) var sources: [Lang: TISInputSource] = [:]
-    private var table: [Lang: [[String]]] = [:]  // [mods][keycode] -> символ
+    private var table: [Lang: [[String]]] = [:]
     private var reverse: [Lang: [Character: Stroke]] = [:]
 
     private func prop<T>(_ s: TISInputSource, _ key: CFString) -> T? {
@@ -103,12 +96,11 @@ final class Layouts {
 
     func render(_ strokes: [Stroke], _ l: Lang) -> String {
         guard let t = table[l] else { return "" }
-        return strokes.map { t[$0.mods][Int($0.key)] }.joined()
+        return strokes.map { $0.key == kSpace ? " " : t[$0.mods][Int($0.key)] }.joined()
     }
 
-    /// Обратное преобразование — для режима --test.
     func strokes(for text: String, in l: Lang) -> [Stroke] {
-        text.compactMap { reverse[l]?[$0] }
+        text.compactMap { $0 == " " ? Stroke(key: kSpace, mods: 0) : reverse[l]?[$0] }
     }
 
     func current() -> Lang? {
