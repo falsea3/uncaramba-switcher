@@ -228,9 +228,11 @@ final class Brain {
             if i == 0 && !doubled { continue }
             var b = a; b.remove(at: i); add(b, (doubled ? 1 : slip ? 0.5 : 0.1) * (i == 0 ? 0.5 : i == n - 1 ? 0.2 : 1))
         }
-        // потерянный пробел: незнаю -> не знаю, вообщем -> в общем (оценка — в editScore)
         func splits(_ x: [Character]) {
-            for i in 1..<x.count { add(Array(String(x[..<i]) + " " + String(x[i...])), 1) }
+            for i in 1..<x.count {
+                add(Array(String(x[..<i]) + " " + String(x[i...])), 1)
+                add(Array(String(x[..<i]) + "-" + String(x[i...])), 1)
+            }
         }
         splits(a)
         // слияние с удвоенной буквой на стыке: вообщем (вообще + м) -> в общем
